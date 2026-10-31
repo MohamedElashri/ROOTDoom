@@ -5,10 +5,10 @@ The real [doomgeneric](https://github.com/ozkl/doomgeneric/tree/e257a09527062bfb
 simulation while ROOT's embedded OpenGL viewer draws textured levels, moving
 sectors, sprites and weapons. ROOT also handles the window and keyboard input.
 
-![Doom in ROOT's embedded OpenGL viewer beside the live ROOT interpreter](assets/screenshot.png)
-
 The game and interpreter share one ROOT process; the prompt remains usable
 while Doom runs.
+
+![Doom in ROOT's embedded OpenGL viewer beside the live ROOT interpreter](assets/screenshot.png)
 
 ## Build and play
 
