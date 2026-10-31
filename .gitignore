@@ -1,0 +1,14 @@
+/build*/
+/external/doomgeneric/
+/.deps/
+/.agents/
+/.aws/
+/.codex/
+*.wad
+*.WAD
+*.lmp
+*.cfg
+core
+core.*
+/rootdoom-data/
+*.dsg

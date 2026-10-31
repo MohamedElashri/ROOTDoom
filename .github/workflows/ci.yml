@@ -1,0 +1,57 @@
+name: Linux ROOT build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CC: gcc-13
+      CXX: g++-13
+    steps:
+      - uses: actions/checkout@v5.1.0
+      - name: Native ROOT dependencies and virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13 cmake curl python3 \
+            libssl-dev libx11-dev libxext-dev libxft-dev libxpm-dev \
+            libtbb-dev libvdt-dev libgif-dev libtiff-dev libjpeg-dev \
+            libpng-dev libglu1-mesa-dev xvfb xauth
+      - name: Install the pinned ROOT binary locally
+        run: |
+          curl -L --fail --retry 2 --max-time 600 \
+            https://root.cern.ch/download/root_v6.40.04.Linux-ubuntu24.04-x86_64-gcc13.3.tar.gz \
+            -o "$RUNNER_TEMP/root.tar.gz"
+          printf '%s  %s\n' \
+            0fb35191ed9b3847abd9ab5f25878845545a5acc16a4465ca1f4310bd63191a8 \
+            "$RUNNER_TEMP/root.tar.gz" | sha256sum -c -
+          mkdir -p .deps
+          tar -xzf "$RUNNER_TEMP/root.tar.gz" -C .deps
+          ./scripts/prepare-local-root.sh
+      - name: Configure and build
+        run: |
+          ./scripts/with-local-root.sh cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release -DROOTDOOM_BUILD_TESTS=ON \
+            -DROOTDOOM_ENABLE_GUI_TESTS=ON
+          ./scripts/with-local-root.sh cmake --build build --parallel 2
+      - name: Unit, batch graphics, lifecycle and native GUI smoke
+        run: xvfb-run -a ./scripts/with-local-root.sh ctest --test-dir build --output-on-failure
+      - name: Sanitize the ROOT-free threaded core
+        run: |
+          ./scripts/with-local-root.sh cmake -S . -B build-debug \
+            -DCMAKE_BUILD_TYPE=Debug -DROOTDOOM_BUILD_TESTS=ON \
+            -DROOTDOOM_ENABLE_SANITIZERS=ON
+          ./scripts/with-local-root.sh cmake --build build-debug --target test_runtime_core --parallel 2
+          ctest --test-dir build-debug --output-on-failure -R '^runtime_core$'
+      - name: Test logs on failure
+        if: failure()
+        run: |
+          cat build/Testing/Temporary/LastTest.log || true
+          cat build-debug/Testing/Temporary/LastTest.log || true
