@@ -18,12 +18,25 @@ struct PresentationTimes {
     double image_ms = 0;
     double paint_ms = 0;
 };
+struct GeometryCounts {
+    std::uint64_t world_frames = 0, ui_frames = 0;
+    std::size_t triangles = 0, sprites = 0, textures = 0;
+};
+class FramePresenter {
+public:
+    virtual ~FramePresenter() = default;
+    virtual PresentationTimes Present(const std::vector<std::uint32_t>& rgb) = 0;
+    virtual void Capture(const std::string& path) = 0;
+    virtual unsigned ResizeCount() const = 0;
+    virtual int SceneObjectCount() const = 0;
+    virtual GeometryCounts GeometryStatistics() const { return {}; }
+};
 
 // Main-thread-only. The canvas outlives the presenter; no pad owns this image.
-class RootImagePresenter {
+class RootImagePresenter : public FramePresenter {
 public:
     explicit RootImagePresenter(TCanvas& canvas);
-    ~RootImagePresenter();
+    ~RootImagePresenter() override;
     RootImagePresenter(const RootImagePresenter&) = delete;
     RootImagePresenter& operator=(const RootImagePresenter&) = delete;
 

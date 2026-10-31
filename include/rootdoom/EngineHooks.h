@@ -15,6 +15,8 @@ extern "C" {
 void RootDoom_Exit(int status);
 void RootDoom_ReportError(const char* format, va_list args);
 char* RootDoom_StateDirectory(void);
+void RootDoom_LevelLoaded(void);
+int RootDoom_UseGeometry(void);
 void* RootDoom_Malloc(size_t size);
 void* RootDoom_Calloc(size_t count, size_t size);
 void* RootDoom_Realloc(void* pointer, size_t size);

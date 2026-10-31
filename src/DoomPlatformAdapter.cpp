@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "rootdoom/DoomEngine.h"
 #include "rootdoom/EngineHooks.h"
+#include "GeometryExport.h"
 
 extern "C" {
 #include "doomgeneric.h"
@@ -36,6 +37,7 @@ struct Context {
     std::unordered_set<FILE*> files;
     std::size_t bytes = 0;
     std::string error, state_directory;
+    std::unique_ptr<rootdoom::GeometryExporter> geometry;
 
     Context(rootdoom::Clock& c, rootdoom::FrameMailbox& f, rootdoom::InputQueue& i,
             const rootdoom::EngineOptions& o, rootdoom::EngineReport& r,
@@ -45,6 +47,7 @@ struct Context {
         const auto path = std::filesystem::absolute(options.data_directory).lexically_normal();
         std::filesystem::create_directories(path);
         state_directory = path.string() + std::filesystem::path::preferred_separator;
+        if (options.geometry) geometry = std::make_unique<rootdoom::GeometryExporter>(options.iwad, *options.geometry);
         active = this;
     }
     ~Context()
@@ -94,6 +97,13 @@ extern "C" void RootDoom_ReportError(const char* format, va_list args)
     std::cerr << "Doom: " << message << '\n';
 }
 extern "C" char* RootDoom_StateDirectory() { return Current().state_directory.data(); }
+extern "C" void RootDoom_LevelLoaded() { if (Current().geometry) Current().geometry->NewLevel(); }
+extern "C" int RootDoom_UseGeometry()
+{
+    if (!Current().geometry || menuactive || automapactive || paused) return 0;
+    ++Current().report.software_views_skipped;
+    return 1;
+}
 extern "C" void* RootDoom_Malloc(std::size_t size)
 {
     void* pointer = std::malloc(size);
@@ -164,6 +174,7 @@ extern "C" void DG_DrawFrame()
     CheckStop();
     static_assert(DOOMGENERIC_RESX == rootdoom::kFrameWidth && DOOMGENERIC_RESY == rootdoom::kFrameHeight);
     Current().frames.Publish(DG_ScreenBuffer, rootdoom::kFramePixels);
+    if (Current().geometry) Current().geometry->Publish(DG_ScreenBuffer);
 }
 extern "C" void DG_SleepMs(std::uint32_t ms)
 {

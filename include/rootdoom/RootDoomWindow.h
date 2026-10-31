@@ -15,7 +15,7 @@ class InputBridge;
 // Owned by main. CloseWindow ends the event loop; it never deletes this object.
 class RootDoomWindow final : public TGMainFrame {
 public:
-    explicit RootDoomWindow(InputQueue* input = nullptr, std::function<void()> close = {});
+    explicit RootDoomWindow(InputQueue* input = nullptr, std::function<void()> close = {}, bool geometry = false);
     ~RootDoomWindow() override;
     void CloseWindow() override;
     TCanvas& Canvas();

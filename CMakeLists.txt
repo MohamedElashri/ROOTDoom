@@ -7,7 +7,8 @@ option(ROOTDOOM_ENABLE_GUI_TESTS "Run tests requiring a working native ROOT/X11 
 option(ROOTDOOM_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer/UBSan" OFF)
 set(ROOTDOOM_TEST_IWAD "$ENV{ROOTDOOM_TEST_IWAD}" CACHE FILEPATH "Optional explicitly supplied IWAD for real-engine tests")
 
-find_package(ROOT 6 CONFIG REQUIRED COMPONENTS Core Gui Gpad ASImage)
+find_package(ROOT 6 CONFIG REQUIRED COMPONENTS Core Gui Gpad ASImage RGL)
+find_package(OpenGL REQUIRED OPTIONAL_COMPONENTS EGL)
 find_package(Threads REQUIRED)
 
 # Match ROOT's ABI when its installation requires a newer standard.
@@ -39,14 +40,18 @@ target_include_directories(rootdoom_core SYSTEM PUBLIC ${ROOT_INCLUDE_DIRS})
 target_include_directories(rootdoom_core PRIVATE "${doomgeneric_SOURCE_DIR}/doomgeneric")
 target_link_libraries(rootdoom_core PUBLIC Threads::Threads)
 rootdoom_project_options(rootdoom_core)
+add_library(rootdoom_geometry STATIC src/GeometryFrame.cpp src/GeometryAssets.cpp)
+target_include_directories(rootdoom_geometry PUBLIC include)
+target_link_libraries(rootdoom_geometry PUBLIC Threads::Threads)
+rootdoom_project_options(rootdoom_geometry)
 include(cmake/DoomEngine.cmake)
 
-add_library(rootdoom_render STATIC src/Frame.cpp src/RootImagePresenter.cpp)
+add_library(rootdoom_render STATIC src/Frame.cpp src/RootImagePresenter.cpp src/GeometryGL.cpp src/RootGeometryPresenter.cpp)
 target_include_directories(rootdoom_render PUBLIC include)
-target_link_libraries(rootdoom_render PUBLIC ROOT::Core ROOT::Gpad ROOT::ASImage)
+target_link_libraries(rootdoom_render PUBLIC rootdoom_geometry ROOT::Core ROOT::Gpad ROOT::ASImage ROOT::RGL OpenGL::GL)
 rootdoom_project_options(rootdoom_render)
 
-add_library(rootdoom_runtime SHARED src/RootDoomWindow.cpp src/PatternDemo.cpp)
+add_library(rootdoom_runtime SHARED src/RootDoomWindow.cpp src/Runtime.cpp)
 set_target_properties(rootdoom_runtime PROPERTIES OUTPUT_NAME rootdoom)
 target_include_directories(rootdoom_runtime PUBLIC include)
 target_include_directories(rootdoom_runtime PRIVATE "${doomgeneric_SOURCE_DIR}/doomgeneric")
@@ -90,6 +95,18 @@ if(ROOTDOOM_BUILD_TESTS)
   rootdoom_project_options(test_runtime_core)
   add_test(NAME runtime_core COMMAND test_runtime_core)
   set_tests_properties(runtime_core PROPERTIES TIMEOUT 30)
+  add_executable(test_geometry tests/test_geometry.cpp)
+  target_link_libraries(test_geometry PRIVATE rootdoom_geometry)
+  rootdoom_project_options(test_geometry)
+  add_test(NAME geometry_core COMMAND test_geometry)
+  if(TARGET OpenGL::EGL)
+    add_executable(test_geometry_pixels tests/test_geometry_pixels.cpp)
+    target_link_libraries(test_geometry_pixels PRIVATE rootdoom_render OpenGL::EGL)
+    rootdoom_project_options(test_geometry_pixels)
+    add_test(NAME geometry_pixels COMMAND test_geometry_pixels)
+    set_tests_properties(geometry_pixels PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77
+      ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1")
+  endif()
   add_test(NAME worker_batch COMMAND rootdoom --batch-worker --duration 2
     --screenshot worker-batch.png --metrics worker-batch.json)
   set_tests_properties(worker_batch PROPERTIES TIMEOUT 15)
@@ -105,6 +122,19 @@ if(ROOTDOOM_BUILD_TESTS)
   set_tests_properties(engine_startup_failure engine_early_stop PROPERTIES
     TIMEOUT 15 PASS_REGULAR_EXPRESSION "ENGINE_HOST_SURVIVED")
   if(ROOTDOOM_TEST_IWAD)
+    add_executable(test_geometry_scene tests/test_geometry_scene.cpp)
+    target_link_libraries(test_geometry_scene PRIVATE rootdoom_engine rootdoom_render)
+    target_include_directories(test_geometry_scene PRIVATE "${doomgeneric_SOURCE_DIR}/doomgeneric")
+    rootdoom_project_options(test_geometry_scene)
+    add_test(NAME geometry_scene COMMAND test_geometry_scene "${ROOTDOOM_TEST_IWAD}")
+    set_tests_properties(geometry_scene PROPERTIES TIMEOUT 30 LABELS iwad)
+    if(TARGET OpenGL::EGL)
+      target_compile_definitions(test_geometry_scene PRIVATE ROOTDOOM_TEST_EGL)
+      target_link_libraries(test_geometry_scene PRIVATE OpenGL::EGL)
+      add_test(NAME geometry_level_pixels COMMAND test_geometry_scene "${ROOTDOOM_TEST_IWAD}" render)
+      set_tests_properties(geometry_level_pixels PROPERTIES TIMEOUT 30 LABELS iwad SKIP_RETURN_CODE 77
+        ENVIRONMENT "LIBGL_ALWAYS_SOFTWARE=1")
+    endif()
     add_executable(test_gameplay tests/test_gameplay.cpp)
     target_link_libraries(test_gameplay PRIVATE rootdoom_engine)
     target_include_directories(test_gameplay PRIVATE "${doomgeneric_SOURCE_DIR}/doomgeneric")
@@ -131,12 +161,31 @@ if(ROOTDOOM_BUILD_TESTS)
     endif()
   endif()
   if(ROOTDOOM_ENABLE_GUI_TESTS)
+    add_executable(test_geometry_native tests/test_geometry_native.cpp)
+    target_link_libraries(test_geometry_native PRIVATE rootdoom_runtime rootdoom_render)
+    rootdoom_project_options(test_geometry_native)
+    add_test(NAME native_geometry_colors COMMAND test_geometry_native)
+    set_tests_properties(native_geometry_colors PROPERTIES TIMEOUT 20 LABELS gui
+      PASS_REGULAR_EXPRESSION "ROOT_GEOMETRY_NATIVE_OK")
     add_test(NAME native_gui_baseline COMMAND rootdoom --self-test-gui)
     set_tests_properties(native_gui_baseline PROPERTIES TIMEOUT 15 LABELS gui)
     add_test(NAME native_worker_smoke COMMAND rootdoom --worker-pattern --duration 2
       --screenshot native-worker-smoke.png --metrics native-worker-smoke.json)
     set_tests_properties(native_worker_smoke PROPERTIES TIMEOUT 15 LABELS gui)
     if(ROOTDOOM_TEST_IWAD)
+      add_test(NAME native_default_renderer COMMAND rootdoom --iwad "${ROOTDOOM_TEST_IWAD}"
+        --duration 3 --data-dir native-geometry-data --screenshot native-default.png --metrics native-default.json
+        -- -warp 1 1 -nomonsters)
+      set_tests_properties(native_default_renderer PROPERTIES TIMEOUT 20 LABELS "gui;iwad"
+        PASS_REGULAR_EXPRESSION "ROOT geometry: world frames=[1-9]")
+      add_test(NAME native_geometry_interpreter COMMAND ROOT::root -l -n -q
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_root_native.C(\"$<TARGET_FILE:rootdoom_runtime>\",\"${ROOTDOOM_TEST_IWAD}\",\"rootgl\")")
+      set_tests_properties(native_geometry_interpreter PROPERTIES TIMEOUT 20 LABELS "gui;iwad"
+        PASS_REGULAR_EXPRESSION "ROOT_NATIVE_ENTRY_OK" FAIL_REGULAR_EXPRESSION "ROOT_NATIVE_ENTRY_FAILED")
+      add_test(NAME native_classic_smoke COMMAND rootdoom --renderer classic --iwad "${ROOTDOOM_TEST_IWAD}"
+        --duration 2 --data-dir native-classic-data --metrics native-classic.json -- -warp 1 1 -nomonsters)
+      set_tests_properties(native_classic_smoke PROPERTIES TIMEOUT 20 LABELS "gui;iwad"
+        PASS_REGULAR_EXPRESSION "Native Doom: frames=")
       add_test(NAME native_root_interpreter COMMAND ROOT::root -l -n -q
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_root_native.C(\"$<TARGET_FILE:rootdoom_runtime>\",\"${ROOTDOOM_TEST_IWAD}\")")
       set_tests_properties(native_root_interpreter PROPERTIES TIMEOUT 20 LABELS "gui;iwad"

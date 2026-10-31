@@ -38,6 +38,15 @@ foreach(name IN LISTS _doom_c_sources)
   elseif(name STREQUAL "i_timer")
     file(READ "${path}" content)
     rootdoom_replace(content "(ticks * TICRATE) / 1000" "((uint64_t) ticks * TICRATE) / 1000")
+  elseif(name STREQUAL "p_setup")
+    file(READ "${path}" content)
+    rootdoom_replace(content "P_SpawnSpecials ();" "P_SpawnSpecials ();\n    RootDoom_LevelLoaded();")
+  elseif(name STREQUAL "r_main")
+    file(READ "${path}" content)
+    # Keep Doom's camera setup and all gameplay; the optional ROOT renderer
+    # replaces the 3D software pass. Original menus/automap retain their UI.
+    rootdoom_replace(content "R_SetupFrame (player);"
+      "R_SetupFrame (player);\n    if (RootDoom_UseGeometry()) return;")
   else()
     list(APPEND _doom_files "${path}")
     continue()
@@ -69,10 +78,10 @@ if(UNIX)
   target_link_libraries(doomgeneric_engine PUBLIC m)
 endif()
 
-add_library(rootdoom_engine STATIC src/DoomPlatformAdapter.cpp)
+add_library(rootdoom_engine STATIC src/DoomPlatformAdapter.cpp src/GeometryExport.cpp)
 set_target_properties(rootdoom_engine PROPERTIES
   CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 target_include_directories(rootdoom_engine PUBLIC include)
 target_include_directories(rootdoom_engine PRIVATE "${doomgeneric_SOURCE_DIR}/doomgeneric")
-target_link_libraries(rootdoom_engine PUBLIC rootdoom_core doomgeneric_engine)
+target_link_libraries(rootdoom_engine PUBLIC rootdoom_core rootdoom_geometry doomgeneric_engine)
 rootdoom_project_options(rootdoom_engine)

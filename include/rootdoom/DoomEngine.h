@@ -7,11 +7,13 @@
 #include <string>
 
 namespace rootdoom {
+class GeometryMailbox;
 struct EngineOptions {
     std::string iwad;
     std::string data_directory;
     std::vector<std::string> arguments;
     bool log_input = false;
+    GeometryMailbox* geometry = nullptr; // Optional immutable scene publisher, outlives worker.
 };
 struct PlayerSnapshot {
     bool valid = false;
@@ -26,6 +28,7 @@ struct EngineReport {
     std::size_t allocations_after_cleanup = 0, files_after_cleanup = 0;
     PlayerSnapshot initial_player, final_player;
     std::uint64_t use_presses = 0;
+    std::uint64_t software_views_skipped = 0;
 };
 void RunDoom(Clock& clock, FrameMailbox& frames, InputQueue& input,
              const EngineOptions& options, EngineReport& report,

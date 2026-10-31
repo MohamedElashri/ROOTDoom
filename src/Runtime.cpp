@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "rootdoom/PatternDemo.h"
+#include "rootdoom/Runtime.h"
 #include "rootdoom/Frame.h"
 #include "rootdoom/RootDoomWindow.h"
 #include "rootdoom/RootImagePresenter.h"
+#include "rootdoom/RootGeometryPresenter.h"
+#include "rootdoom/GeometryFrame.h"
 #include "rootdoom/DoomRunner.h"
 #include "rootdoom/FrameMailbox.h"
 #include "rootdoom/InputQueue.h"
@@ -41,6 +43,7 @@ double Milliseconds(Clock::duration delta) { return std::chrono::duration<double
 
 struct Runtime {
     FrameMailbox frames;
+    GeometryMailbox geometry;
     InputQueue input;
     EngineReport engine_report;
     bool game = false;
@@ -57,11 +60,12 @@ struct Runtime {
         return true;
     }
 
-    void Start(const DemoOptions& options)
+    void Start(const RunOptions& options)
     {
-        game = options.mode == DemoMode::NativeGame || options.mode == DemoMode::BatchGame;
+        game = options.mode == RunMode::NativeGame || options.mode == RunMode::BatchGame;
         if (game) {
-            const EngineOptions engine_options{options.iwad, options.data_directory, options.doom_arguments, options.log_input};
+            const EngineOptions engine_options{options.iwad, options.data_directory, options.doom_arguments, options.log_input,
+                options.renderer == Renderer::RootGL ? &geometry : nullptr};
             runner.Start([this, engine_options](rootdoom::Clock& clock) {
                 RunDoom(clock, frames, input, engine_options, engine_report, [this](const std::string& title) {
                     std::lock_guard<std::mutex> lock(title_mutex);
@@ -110,6 +114,12 @@ struct StopRuntime {
     ~StopRuntime() { if (runtime) runtime->Stop(); }
 };
 
+std::unique_ptr<FramePresenter> MakePresenter(const RunOptions& options, TCanvas& canvas, Runtime* runtime)
+{
+    if (options.renderer == Renderer::RootGL) return std::make_unique<RootGeometryPresenter>(canvas, runtime->geometry, options.wireframe);
+    return std::make_unique<RootImagePresenter>(canvas);
+}
+
 // Percentiles use at most 4096 recent samples; sums/count/max cover the full run.
 class Samples {
 public:
@@ -137,9 +147,9 @@ private:
     double max_ = 0;
 };
 
-class PatternSession {
+class PresentationSession {
 public:
-    PatternSession(const DemoOptions& options, TCanvas& canvas, RootImagePresenter* presenter,
+    PresentationSession(const RunOptions& options, TCanvas& canvas, FramePresenter* presenter,
                    std::function<void(unsigned, unsigned)> resize, Runtime* runtime = nullptr,
                    std::function<void(const std::string&)> title = {})
         : options_(options), canvas_(canvas), presenter_(presenter), resize_(std::move(resize)),
@@ -220,11 +230,15 @@ public:
     {
         if (!presenter_) return;
         const double fps = elapsed_ > 0 ? frames_ / elapsed_ : 0;
-        const bool native = options_.mode == DemoMode::NativePattern || options_.mode == DemoMode::NativeWorker || options_.mode == DemoMode::NativeGame;
-        std::cout << (native ? "Native" : "Batch") << (runtime_ && runtime_->game ? " Doom" : " pattern") << ": frames=" << frames_
+        const bool native = options_.mode == RunMode::NativePattern || options_.mode == RunMode::NativeWorker || options_.mode == RunMode::NativeGame;
+        std::cout << (native ? "Native" : "Batch") << (runtime_ && runtime_->game ? " Doom" : " pattern")
+                  << (options_.renderer == Renderer::RootGL ? " (ROOT geometry)" : "") << ": frames=" << frames_
                   << ", elapsed=" << elapsed_ << "s, rate=" << fps
                   << " FPS, paint mean/p95=" << paints_.Mean() << '/' << paints_.P95()
                   << "ms, RSS peak=" << peak_rss_ << " KiB\n";
+        const auto geometry = presenter_->GeometryStatistics();
+        if (options_.renderer == Renderer::RootGL) std::cout << "ROOT geometry: world frames=" << geometry.world_frames
+            << ", triangles=" << geometry.triangles << ", sprites=" << geometry.sprites << ", textures=" << geometry.textures << '\n';
         if (options_.metrics.empty()) return;
         const std::filesystem::path file(options_.metrics);
         if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
@@ -232,6 +246,11 @@ public:
         if (!stream) throw std::runtime_error("Cannot write metrics: " + options_.metrics);
         stream << std::fixed << std::setprecision(6) << std::boolalpha;
         stream << "{\n  \"schema\": 1,\n  \"mode\": \"" << (native ? "native" : "batch") << "\",\n"
+               << "  \"renderer\": \"" << (options_.renderer == Renderer::RootGL ? "rootgl" : "classic") << "\",\n"
+               << "  \"geometry_world_frames\": " << geometry.world_frames << ",\n"
+               << "  \"geometry_triangles\": " << geometry.triangles << ",\n"
+               << "  \"geometry_sprites\": " << geometry.sprites << ",\n"
+               << "  \"geometry_textures\": " << geometry.textures << ",\n"
                << "  \"source\": \"" << (runtime_ ? (runtime_->game ? "doom" : "worker") : "gui") << "\",\n"
                << "  \"root_version\": " << std::quoted(gROOT->GetVersion()) << ",\n"
                << "  \"platform\": " << std::quoted(gSystem->GetBuildArch()) << ",\n"
@@ -263,6 +282,7 @@ public:
                    << "  \"engine_peak_bytes\": " << runtime_->engine_report.peak_bytes << ",\n"
                    << "  \"engine_allocations_after_cleanup\": " << runtime_->engine_report.allocations_after_cleanup << ",\n"
                    << "  \"engine_files_after_cleanup\": " << runtime_->engine_report.files_after_cleanup << ",\n";
+            stream << "  \"software_world_views_skipped\": " << runtime_->engine_report.software_views_skipped << ",\n";
             const auto& initial = runtime_->engine_report.initial_player;
             const auto& final = runtime_->engine_report.final_player;
             stream << "  \"player_state_available\": " << final.valid << ",\n"
@@ -307,9 +327,9 @@ private:
             ++warm_samples_;
         }
     }
-    const DemoOptions& options_;
+    const RunOptions& options_;
     TCanvas& canvas_;
-    RootImagePresenter* presenter_;
+    FramePresenter* presenter_;
     std::function<void(unsigned, unsigned)> resize_;
     Clock::time_point start_, next_frame_, last_proc_, previous_frame_;
     std::vector<std::uint32_t> frame_;
@@ -326,9 +346,9 @@ private:
     std::function<void(const std::string&)> title_;
 };
 
-class DemoTimer final : public TTimer {
+class PresentationTimer final : public TTimer {
 public:
-    DemoTimer(PatternSession& session, RootDoomWindow& window) : TTimer(5, kTRUE), session_(session), window_(window) {}
+    PresentationTimer(PresentationSession& session, RootDoomWindow& window) : TTimer(5, kTRUE), session_(session), window_(window) {}
     Bool_t Notify() override
     {
         bool finished = false;
@@ -349,11 +369,11 @@ public:
         return kTRUE;
     }
 private:
-    PatternSession& session_;
+    PresentationSession& session_;
     RootDoomWindow& window_;
 };
 
-void FinishDemo(PatternSession& session, RootImagePresenter* presenter, const DemoOptions& options)
+void FinishSession(PresentationSession& session, FramePresenter* presenter, const RunOptions& options)
 {
     session.Finish();
     if (!session.Error().empty()) throw std::runtime_error(session.Error());
@@ -374,14 +394,14 @@ private:
 // the stopped timer/owner remain valid until shutdown, never self-delete in Notify.
 class InteractiveSession {
 public:
-    explicit InteractiveSession(DemoOptions options) : options_(std::move(options)), runtime_(std::make_unique<Runtime>())
+    explicit InteractiveSession(RunOptions options) : options_(std::move(options)), runtime_(std::make_unique<Runtime>())
     {
-        window_ = std::make_unique<RootDoomWindow>(&runtime_->input, [this] { closing_ = true; });
+        window_ = std::make_unique<RootDoomWindow>(&runtime_->input, [this] { closing_ = true; }, options_.renderer == Renderer::RootGL);
         window_->SetWindowName("ROOTDoom — Doom inside the ROOT interpreter");
-        presenter_ = std::make_unique<RootImagePresenter>(window_->Canvas());
+        presenter_ = MakePresenter(options_, window_->Canvas(), runtime_.get());
         try {
             runtime_->Start(options_);
-            session_ = std::make_unique<PatternSession>(options_, window_->Canvas(), presenter_.get(),
+            session_ = std::make_unique<PresentationSession>(options_, window_->Canvas(), presenter_.get(),
                 [this](unsigned w, unsigned h) { window_->Resize(w, h); window_->Layout(); }, runtime_.get(),
                 [this](const std::string& title) { window_->SetWindowName(title.c_str()); });
             timer_ = std::make_unique<InteractiveTimer>(*this);
@@ -412,7 +432,7 @@ public:
         if (timer_) timer_->TurnOff();
         if (runtime_) runtime_->Stop();
         if (session_) {
-            try { FinishDemo(*session_, presenter_.get(), options_); }
+            try { FinishSession(*session_, presenter_.get(), options_); }
             catch (const std::exception& error) { std::cerr << "ROOTDoom: " << error.what() << '\n'; }
         }
         session_.reset();
@@ -421,11 +441,11 @@ public:
         runtime_.reset();
     }
 private:
-    DemoOptions options_;
+    RunOptions options_;
     std::unique_ptr<Runtime> runtime_;
     std::unique_ptr<RootDoomWindow> window_;
-    std::unique_ptr<RootImagePresenter> presenter_;
-    std::unique_ptr<PatternSession> session_;
+    std::unique_ptr<FramePresenter> presenter_;
+    std::unique_ptr<PresentationSession> session_;
     std::unique_ptr<InteractiveTimer> timer_;
     bool closing_ = false, closed_ = false;
 };
@@ -472,12 +492,13 @@ void InstallShutdownHook()
 }
 } // namespace
 
-int LaunchInteractive(const char* iwad, const char* data_directory)
+int LaunchInteractive(const char* iwad, const char* data_directory, Renderer renderer = Renderer::RootGL)
 {
     if (!gApplication) throw std::runtime_error("Interpreter entry requires an existing ROOT application");
     InstallShutdownHook();
     if (gROOT->IsBatch()) throw std::runtime_error("Interpreter entry requires an existing native ROOT session (omit -b)");
-    DemoOptions options;
+    RunOptions options;
+    options.renderer = renderer;
     options.iwad = ValidateWad(iwad ? iwad : "").path;
     options.data_directory = data_directory && *data_directory ? data_directory : "rootdoom-data";
     options.metrics = (std::filesystem::path(options.data_directory) / "root-session.json").string();
@@ -493,11 +514,11 @@ int LaunchInteractive(const char* iwad, const char* data_directory)
 int InteractiveRunning() { return InteractiveOwner() && InteractiveOwner()->Running() ? 1 : 0; }
 void ShutdownInteractive() { if (InteractiveOwner()) InteractiveOwner()->Finish(); }
 
-int RunDemo(const DemoOptions& options, char* executable)
+int RunApplication(const RunOptions& options, char* executable)
 {
-    const bool game = options.mode == DemoMode::NativeGame || options.mode == DemoMode::BatchGame;
-    const bool batch = options.mode == DemoMode::BatchPattern || options.mode == DemoMode::BatchWorker || options.mode == DemoMode::BatchGame;
-    const bool threaded = options.mode == DemoMode::NativeWorker || options.mode == DemoMode::BatchWorker || game;
+    const bool game = options.mode == RunMode::NativeGame || options.mode == RunMode::BatchGame;
+    const bool batch = options.mode == RunMode::BatchPattern || options.mode == RunMode::BatchWorker || options.mode == RunMode::BatchGame;
+    const bool threaded = options.mode == RunMode::NativeWorker || options.mode == RunMode::BatchWorker || game;
     char batch_flag[] = "-b";
     char* root_argv[] = {executable, batch ? batch_flag : nullptr, nullptr};
     int root_argc = batch ? 2 : 1;
@@ -510,23 +531,23 @@ int RunDemo(const DemoOptions& options, char* executable)
         RootImagePresenter presenter(canvas);
         if (runtime) runtime->Start(options);
         StopRuntime stop{runtime.get()};
-        PatternSession session(options, canvas, &presenter,
+        PresentationSession session(options, canvas, &presenter,
                                [&canvas](unsigned w, unsigned h) { canvas.SetCanvasSize(w, h); }, runtime.get());
         while (!session.Step()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         if (runtime) runtime->Stop();
-        FinishDemo(session, &presenter, options);
+        FinishSession(session, &presenter, options);
         return 0;
     }
     if (gROOT->IsBatch()) {
         std::cerr << "ROOT could not initialize its native GUI. Check DISPLAY and X11 permissions.\n";
         return 1;
     }
-    RootDoomWindow window(runtime ? &runtime->input : nullptr);
-    std::unique_ptr<RootImagePresenter> presenter;
-    if (options.mode == DemoMode::NativePattern || threaded) {
-        presenter = std::make_unique<RootImagePresenter>(window.Canvas());
+    RootDoomWindow window(runtime ? &runtime->input : nullptr, {}, options.renderer == Renderer::RootGL);
+    std::unique_ptr<FramePresenter> presenter;
+    if (options.mode == RunMode::NativePattern || threaded) {
+        presenter = MakePresenter(options, window.Canvas(), runtime.get());
         window.SetWindowName("ROOTDoom — 640 x 400 framebuffer test");
         std::cout << "Animated ROOT canvas: resize/move/minimize/restore the window; close to stop.\n";
         if (threaded && !game) {
@@ -540,16 +561,16 @@ int RunDemo(const DemoOptions& options, char* executable)
     }
     if (runtime) runtime->Start(options);
     StopRuntime stop{runtime.get()};
-    PatternSession session(options, window.Canvas(), presenter.get(), [&window](unsigned w, unsigned h) {
+    PresentationSession session(options, window.Canvas(), presenter.get(), [&window](unsigned w, unsigned h) {
         window.Resize(w, h);
         window.Layout();
     }, runtime.get(), [&window](const std::string& title) { window.SetWindowName(title.c_str()); });
-    DemoTimer timer(session, window);
+    PresentationTimer timer(session, window);
     timer.TurnOn();
     application.Run(kTRUE);
     timer.TurnOff();
     if (runtime) runtime->Stop();
-    FinishDemo(session, presenter.get(), options);
+    FinishSession(session, presenter.get(), options);
     return 0;
 }
 
@@ -562,3 +583,12 @@ extern "C" int RootDoomLaunch(const char* iwad, const char* data_directory)
 }
 extern "C" int RootDoomIsRunning() { return rootdoom::InteractiveRunning(); }
 extern "C" void RootDoomShutdown() { rootdoom::ShutdownInteractive(); }
+extern "C" int RootDoomLaunchRenderer(const char* iwad, const char* data_directory, const char* renderer)
+{
+    try {
+        const std::string mode = renderer ? renderer : "rootgl";
+        if (mode != "classic" && mode != "rootgl") throw std::invalid_argument("Renderer must be classic or rootgl");
+        return rootdoom::LaunchInteractive(iwad, data_directory,
+            mode == "rootgl" ? rootdoom::Renderer::RootGL : rootdoom::Renderer::Classic);
+    } catch (const std::exception& error) { std::cerr << "ROOTDoom: " << error.what() << '\n'; return 1; }
+}

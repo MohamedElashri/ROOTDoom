@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "rootdoom/PatternDemo.h"
+#include "rootdoom/Runtime.h"
 #include "rootdoom/Wad.h"
 
 #include <charconv>
@@ -17,6 +17,8 @@ void Usage()
     std::cout << "ROOTDoom: Doom inside a native CERN ROOT canvas (silent)\n"
                  "Usage: rootdoom [MODE] [OPTIONS]\n"
                  "  --iwad WAD          Required Doom IWAD (for example doom1.wad).\n"
+                 "  --renderer MODE     rootgl (default) or classic (software framebuffer).\n"
+                 "  --wireframe         Draw the rootgl world as triangle edges.\n"
                  "  --batch-game        Real engine/presenter smoke without a display.\n"
                  "  --data-dir DIR      Configuration/save directory (default: ./rootdoom-data).\n"
                  "  --self-test-gui     Black ROOT canvas; close after one second.\n"
@@ -40,9 +42,10 @@ void Usage()
 
 int main(int argc, char** argv)
 {
-    rootdoom::DemoOptions options;
+    rootdoom::RunOptions options;
     try {
         unsigned modes = 0;
+        bool renderer_selected = false;
         for (int i = 1; i < argc; ++i) {
             const std::string_view arg(argv[i]);
             auto value = [&]() -> std::string_view {
@@ -56,21 +59,29 @@ int main(int argc, char** argv)
                 return 0;
             } else if (arg == "--self-test-gui") {
                 ++modes;
-                options.mode = rootdoom::DemoMode::Baseline;
+                options.mode = rootdoom::RunMode::Baseline;
                 options.duration_seconds = 1;
             } else if (arg == "--iwad") {
                 options.iwad = value();
+            } else if (arg == "--renderer") {
+                renderer_selected = true;
+                const auto renderer = value();
+                if (renderer == "classic") options.renderer = rootdoom::Renderer::Classic;
+                else if (renderer == "rootgl") options.renderer = rootdoom::Renderer::RootGL;
+                else throw std::invalid_argument("--renderer must be classic or rootgl");
+            } else if (arg == "--wireframe") {
+                options.wireframe = true;
             } else if (arg == "--batch-game") {
                 ++modes;
-                options.mode = rootdoom::DemoMode::BatchGame;
+                options.mode = rootdoom::RunMode::BatchGame;
             } else if (arg == "--data-dir") {
                 options.data_directory = value();
             } else if (arg == "--test-pattern" || arg == "--batch-pattern") {
                 ++modes;
-                options.mode = arg == "--test-pattern" ? rootdoom::DemoMode::NativePattern : rootdoom::DemoMode::BatchPattern;
+                options.mode = arg == "--test-pattern" ? rootdoom::RunMode::NativePattern : rootdoom::RunMode::BatchPattern;
             } else if (arg == "--worker-pattern" || arg == "--batch-worker") {
                 ++modes;
-                options.mode = arg == "--worker-pattern" ? rootdoom::DemoMode::NativeWorker : rootdoom::DemoMode::BatchWorker;
+                options.mode = arg == "--worker-pattern" ? rootdoom::RunMode::NativeWorker : rootdoom::RunMode::BatchWorker;
             } else if (arg == "--duration") {
                 const auto text = value();
                 unsigned duration = 0;
@@ -98,12 +109,18 @@ int main(int argc, char** argv)
             }
         }
         if (modes > 1) throw std::invalid_argument("Choose only one display mode");
-        const bool game = options.mode == rootdoom::DemoMode::NativeGame || options.mode == rootdoom::DemoMode::BatchGame;
-        if ((options.mode == rootdoom::DemoMode::BatchPattern || options.mode == rootdoom::DemoMode::BatchWorker ||
-             options.mode == rootdoom::DemoMode::BatchGame) && !options.duration_seconds) {
+        const bool game = options.mode == rootdoom::RunMode::NativeGame || options.mode == rootdoom::RunMode::BatchGame;
+        // Diagnostics and display-free modes retain the image presenter.
+        if (!renderer_selected && options.mode != rootdoom::RunMode::NativeGame) options.renderer = rootdoom::Renderer::Classic;
+        if (options.renderer == rootdoom::Renderer::RootGL && options.mode != rootdoom::RunMode::NativeGame) {
+            throw std::invalid_argument("The rootgl renderer requires native game mode and an OpenGL display");
+        }
+        if (options.wireframe && options.renderer != rootdoom::Renderer::RootGL) throw std::invalid_argument("--wireframe requires --renderer rootgl");
+        if ((options.mode == rootdoom::RunMode::BatchPattern || options.mode == rootdoom::RunMode::BatchWorker ||
+             options.mode == rootdoom::RunMode::BatchGame) && !options.duration_seconds) {
             throw std::invalid_argument("Batch modes require --duration");
         }
-        if (options.log_input && !game && options.mode != rootdoom::DemoMode::NativeWorker && options.mode != rootdoom::DemoMode::BatchWorker) {
+        if (options.log_input && !game && options.mode != rootdoom::RunMode::NativeWorker && options.mode != rootdoom::RunMode::BatchWorker) {
             throw std::invalid_argument("--log-input requires a worker mode");
         }
         if (game) {
@@ -112,7 +129,7 @@ int main(int argc, char** argv)
         } else if (!options.iwad.empty() || !options.doom_arguments.empty()) {
             throw std::invalid_argument("IWAD/Doom arguments require a game mode");
         }
-        if (options.mode == rootdoom::DemoMode::Baseline &&
+        if (options.mode == rootdoom::RunMode::Baseline &&
             (!options.screenshot.empty() || !options.metrics.empty() || options.exercise_resize)) {
             throw std::invalid_argument("Screenshot/metrics/resize options require a pattern mode");
         }
@@ -122,8 +139,8 @@ int main(int argc, char** argv)
     }
 #if defined(__linux__)
     const char* display = std::getenv("DISPLAY");
-    if (options.mode != rootdoom::DemoMode::BatchPattern && options.mode != rootdoom::DemoMode::BatchWorker &&
-        options.mode != rootdoom::DemoMode::BatchGame &&
+    if (options.mode != rootdoom::RunMode::BatchPattern && options.mode != rootdoom::RunMode::BatchWorker &&
+        options.mode != rootdoom::RunMode::BatchGame &&
         (display == nullptr || *display == '\0')) {
         std::cerr << "ROOTDoom requires a native X11 display. Set DISPLAY to an accessible X server.\n";
         return 1;
@@ -131,7 +148,7 @@ int main(int argc, char** argv)
 #endif
 
     try {
-        return rootdoom::RunDemo(options, argv[0]);
+        return rootdoom::RunApplication(options, argv[0]);
     } catch (const std::exception& error) {
         std::cerr << "ROOTDoom: " << error.what() << '\n';
         return 1;

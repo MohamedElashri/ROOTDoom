@@ -5,9 +5,12 @@
 #include <vector>
 
 namespace rootdoom {
-enum class DemoMode { Baseline, NativePattern, BatchPattern, NativeWorker, BatchWorker, NativeGame, BatchGame };
-struct DemoOptions {
-    DemoMode mode = DemoMode::NativeGame;
+enum class RunMode { Baseline, NativePattern, BatchPattern, NativeWorker, BatchWorker, NativeGame, BatchGame };
+enum class Renderer { Classic, RootGL };
+struct RunOptions {
+    RunMode mode = RunMode::NativeGame;
+    Renderer renderer = Renderer::RootGL;
+    bool wireframe = false;
     unsigned duration_seconds = 0;
     bool exercise_resize = false;
     bool log_input = false;
@@ -17,5 +20,5 @@ struct DemoOptions {
     std::string data_directory = "rootdoom-data";
     std::vector<std::string> doom_arguments;
 };
-int RunDemo(const DemoOptions& options, char* executable);
+int RunApplication(const RunOptions& options, char* executable);
 } // namespace rootdoom

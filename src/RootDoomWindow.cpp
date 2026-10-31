@@ -8,6 +8,7 @@
 #include <TGClient.h>
 #include <TRootEmbeddedCanvas.h>
 #include <TVirtualX.h>
+#include <TStyle.h>
 #include <chrono>
 
 namespace rootdoom {
@@ -42,14 +43,21 @@ private:
 };
 } // namespace
 
-RootDoomWindow::RootDoomWindow(InputQueue* input, std::function<void()> close)
+RootDoomWindow::RootDoomWindow(InputQueue* input, std::function<void()> close, bool geometry)
     : TGMainFrame(gClient->GetRoot(), 800, 500), close_(std::move(close))
 {
     if (input) input_ = std::make_unique<InputBridge>(*input);
     AddInput(kKeyPressMask | kKeyReleaseMask | kFocusChangeMask);
     SetCleanup(kDeepCleanup);
     SetWindowName("ROOTDoom — native ROOT GUI baseline");
-    embedded_ = new InputCanvas(*this);
+    {
+        struct CanvasPreference {
+            Bool_t previous = gStyle->GetCanvasPreferGL();
+            ~CanvasPreference() { gStyle->SetCanvasPreferGL(previous); }
+        } preference;
+        gStyle->SetCanvasPreferGL(geometry);
+        embedded_ = new InputCanvas(*this);
+    }
     AddFrame(embedded_, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY));
     Canvas().SetFillColor(1);
     Canvas().Modified();

@@ -23,7 +23,8 @@ jobs:
           sudo apt-get install -y gcc-13 g++-13 cmake curl python3 \
             libssl-dev libx11-dev libxext-dev libxft-dev libxpm-dev \
             libtbb-dev libvdt-dev libgif-dev libtiff-dev libjpeg-dev \
-            libpng-dev libglu1-mesa-dev xvfb xauth
+            libpng-dev libglu1-mesa-dev libegl1-mesa-dev libftgl-dev libgl2ps-dev \
+            libgl1-mesa-dri libegl-mesa0 xvfb xauth
       - name: Install the pinned ROOT binary locally
         run: |
           curl -L --fail --retry 2 --max-time 600 \

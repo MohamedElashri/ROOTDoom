@@ -10,10 +10,13 @@ void check_root_entry(const char* library)
     using Launch = int (*)(const char*, const char*);
     using Running = int (*)();
     using Shutdown = void (*)();
+    using LaunchRenderer = int (*)(const char*, const char*, const char*);
     auto launch = reinterpret_cast<Launch>(gSystem->DynFindSymbol(library, "RootDoomLaunch"));
     auto running = reinterpret_cast<Running>(gSystem->DynFindSymbol(library, "RootDoomIsRunning"));
     auto shutdown = reinterpret_cast<Shutdown>(gSystem->DynFindSymbol(library, "RootDoomShutdown"));
-    if (!launch || !running || !shutdown || running() != 0) { fail(); return; }
+    auto renderer = reinterpret_cast<LaunchRenderer>(gSystem->DynFindSymbol(library, "RootDoomLaunchRenderer"));
+    if (!launch || !running || !shutdown || !renderer || running() != 0) { fail(); return; }
+    if (renderer("unused.wad", "unused-data", "invalid") != 1 || running() != 0) { fail(); return; }
     if (launch("unused.wad", "unused-data") != 1 || running() != 0) { fail(); return; }
     // Even a rejected launch installs the same compiled shutdown hook used by a native launch.
     gApplication->Emit("Terminate(Int_t)", 0);
