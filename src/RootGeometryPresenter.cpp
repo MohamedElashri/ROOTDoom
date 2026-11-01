@@ -8,6 +8,11 @@
 #include <TGLSceneBase.h>
 #include <TGLViewer.h>
 #include <TGLWidget.h>
+#include <TVirtualX.h>
+#ifdef __APPLE__
+#define GL_SILENCE_DEPRECATION
+#include <OpenGL/gl.h>
+#endif
 #include <chrono>
 #include <filesystem>
 #include <stdexcept>
@@ -58,7 +63,7 @@ struct RootGeometryPresenter::Impl {
     unsigned resizes=0, width=0, height=0;
     Impl(TCanvas& c, GeometryMailbox& m, bool wireframe) : canvas(c), mailbox(m)
     {
-        if (canvas.GetGLDevice()<0) throw std::runtime_error("ROOT could not create an embedded OpenGL context; check GLX/display support");
+        if (canvas.GetGLDevice()<0) throw std::runtime_error("ROOT could not create an embedded OpenGL context; check OpenGL/display support");
         // The legacy canvas GL manager can create a context without running
         // TGLWidget's window-system loader. ROOT 6.40 then calls a null GLX
         // entry point from TGLContext::GetCurrent during the first viewer draw.
@@ -69,6 +74,7 @@ struct RootGeometryPresenter::Impl {
             if (!bootstrap || !bootstrap->MakeCurrent()) throw std::runtime_error("ROOT OpenGL loader initialization failed");
         }
         if (!gGLManager->MakeCurrent(canvas.GetGLDevice())) throw std::runtime_error("Cannot activate ROOT's canvas OpenGL context");
+#ifndef __APPLE__
         // Embedded viewers render through the GL manager's readback pixmap.
         // A full embedded canvas does not allocate that device automatically.
         // It also supplies the viewer's viewport dimensions.
@@ -79,6 +85,9 @@ struct RootGeometryPresenter::Impl {
                 throw std::runtime_error("Cannot create ROOT's embedded OpenGL presentation device");
             }
         }
+#endif
+        // On Cocoa the canvas owns an on-screen OpenGL view; ROOT's manager has
+        // no off-screen devices and reports no viewport. The scene sets its own.
         // ROOT registers "gl" for the embedded TGLViewer; "ogl" creates a
         // standalone TGLSAViewer window even when the canvas has a GL device.
         viewer=dynamic_cast<TGLViewer*>(canvas.GetViewer3D("gl"));
@@ -109,9 +118,13 @@ PresentationTimes RootGeometryPresenter::Present(const std::vector<std::uint32_t
     if (w!=impl_->width || h!=impl_->height) {
         if (impl_->width) ++impl_->resizes;
         impl_->width=w; impl_->height=h;
+#ifndef __APPLE__
         if (w>1 && h>1) gGLManager->ResizeOffScreenDevice(impl_->canvas.GetGLDevice(),0,0,w,h);
+#endif
     }
-    impl_->scene.width=static_cast<int>(w); impl_->scene.height=static_cast<int>(h);
+    // Cocoa's GL view uses a Retina-resolution drawable; elsewhere the scale is 1.
+    const double scale=gVirtualX->GetOpenGLScalingFactor();
+    impl_->scene.width=static_cast<int>(w*scale); impl_->scene.height=static_cast<int>(h*scale);
     // RequestDraw fills the readback pixmap; direct-copy tells ROOT to present
     // it in the native canvas as well. ROOT clears this flag after each draw.
     gGLManager->MarkForDirectCopy(impl_->canvas.GetGLDevice(),kTRUE);
@@ -124,10 +137,23 @@ void RootGeometryPresenter::Capture(const std::string& path)
 {
     if (std::filesystem::path(path).extension()!=".png") throw std::runtime_error("Geometry capture requires a PNG path");
     if (std::filesystem::path(path).has_parent_path()) std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+#ifdef __APPLE__
+    // Cocoa's manager reports no viewport to the embedded viewer, so its own
+    // capture reads an empty rectangle. Redraw and read the back buffer here.
+    const int w=impl_->scene.width, h=impl_->scene.height;
+    if (w<1 || h<1 || !gGLManager->MakeCurrent(impl_->canvas.GetGLDevice())) throw std::runtime_error("ROOT OpenGL capture is empty");
+    impl_->viewer->DoDraw(kFALSE);
+    std::vector<UChar_t> pixels(std::size_t(w)*h*4);
+    glReadBuffer(GL_BACK); glPixelStorei(GL_PACK_ALIGNMENT,1);
+    glReadPixels(0,0,w,h,GL_BGRA,GL_UNSIGNED_BYTE,pixels.data());
+    std::unique_ptr<TImage> image(TImage::Create());
+    if (image) image->FromGLBuffer(pixels.data(),w,h);
+#else
     // X11's window-image capture does not reliably include a GL drawable.
     // Use the viewer's own back-buffer capture (which also redraws the scene)
     // instead of TASImage::FromPad's XGetImage path.
     std::unique_ptr<TImage> image(impl_->viewer->GetPictureUsingBB());
+#endif
     if (!image || !image->GetWidth() || !image->GetHeight()) throw std::runtime_error("ROOT OpenGL capture is empty");
     image->WriteImage(path.c_str());
     if (!std::filesystem::exists(path) || !std::filesystem::file_size(path)) throw std::runtime_error("Cannot capture ROOT geometry canvas");

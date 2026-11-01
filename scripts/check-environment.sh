@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Diagnose ROOT runtime and X11 independently, without changing host settings.
+# Diagnose ROOT runtime and the native display independently, without changing host settings.
 set -euo pipefail
 
 root_only=false
@@ -13,6 +13,18 @@ fi
 failures=0
 log_file=$(mktemp "${TMPDIR:-/tmp}/rootdoom-environment.XXXXXX")
 trap 'rm -f -- "$log_file"' EXIT
+# macOS lacks GNU timeout unless coreutils is installed.
+with_timeout() {
+    local seconds=$1
+    shift
+    if command -v timeout >/dev/null; then
+        timeout "$seconds" "$@"
+    elif command -v gtimeout >/dev/null; then
+        gtimeout "$seconds" "$@"
+    else
+        "$@"
+    fi
+}
 
 if ! command -v root-config >/dev/null || ! command -v root >/dev/null; then
     printf 'FAIL: root and root-config must both be on PATH.\n'
@@ -21,7 +33,7 @@ else
     printf 'ROOT executable: %s\n' "$(command -v root)"
     printf 'ROOT version: %s\n' "$(root-config --version)"
     printf 'ROOT prefix: %s\n' "$(root-config --prefix)"
-    if timeout 30 root -l -n -b -q -e \
+    if with_timeout 30 root -l -n -b -q -e \
         'if (gSystem->Load("libGui") < 0 || gSystem->Load("libASImage") < 0) { gSystem->Exit(1); } std::cout << "ROOT_STARTUP_OK" << std::endl; 0;' \
         >"$log_file" 2>&1; then
         if grep -qx 'ROOT_STARTUP_OK' "$log_file" &&
@@ -42,13 +54,20 @@ fi
 
 if [[ "$root_only" == true ]]; then
     printf 'Native display check omitted by --root-only.\n'
+elif [[ $(uname -s) == Darwin ]]; then
+    if root-config --has-cocoa 2>/dev/null | grep -qx yes; then
+        printf 'PASS: ROOT uses the native macOS Cocoa backend; no X11 display is needed.\n'
+    else
+        printf 'FAIL: ROOT was built without Cocoa support; ROOTDoom needs a Cocoa-enabled ROOT on macOS.\n'
+        failures=$((failures + 1))
+    fi
 elif [[ -z ${DISPLAY:-} ]]; then
     printf 'FAIL: DISPLAY is unset; native ROOT needs an X11 display on Linux.\n'
     failures=$((failures + 1))
 elif ! command -v xdpyinfo >/dev/null; then
     printf 'FAIL: xdpyinfo is unavailable; install the X11 diagnostic utility.\n'
     failures=$((failures + 1))
-elif timeout 10 xdpyinfo >"$log_file" 2>&1; then
+elif with_timeout 10 xdpyinfo >"$log_file" 2>&1; then
     printf 'PASS: X11 display %s is accessible.\n' "$DISPLAY"
 else
     printf 'FAIL: Cannot access X11 display %s from this session.\n' "$DISPLAY"

@@ -3,7 +3,7 @@ project(ROOTDoom VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(ROOTDOOM_BUILD_TESTS "Build ROOTDoom tests" ON)
-option(ROOTDOOM_ENABLE_GUI_TESTS "Run tests requiring a working native ROOT/X11 display" OFF)
+option(ROOTDOOM_ENABLE_GUI_TESTS "Run tests requiring a working native ROOT display (X11 or macOS Cocoa)" OFF)
 option(ROOTDOOM_ENABLE_SANITIZERS "Instrument project C++ code with AddressSanitizer/UBSan" OFF)
 set(ROOTDOOM_TEST_IWAD "$ENV{ROOTDOOM_TEST_IWAD}" CACHE FILEPATH "Optional explicitly supplied IWAD for real-engine tests")
 

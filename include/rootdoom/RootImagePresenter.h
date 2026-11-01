@@ -40,10 +40,10 @@ public:
     RootImagePresenter(const RootImagePresenter&) = delete;
     RootImagePresenter& operator=(const RootImagePresenter&) = delete;
 
-    PresentationTimes Present(const std::vector<std::uint32_t>& rgb);
-    void Capture(const std::string& path);
-    unsigned ResizeCount() const { return resize_count_; }
-    int SceneObjectCount() const;
+    PresentationTimes Present(const std::vector<std::uint32_t>& rgb) override;
+    void Capture(const std::string& path) override;
+    unsigned ResizeCount() const override { return resize_count_; }
+    int SceneObjectCount() const override;
 
 private:
     void FitPad();

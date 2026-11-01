@@ -12,15 +12,24 @@ while Doom runs.
 
 ## Build and play
 
-Requires Linux with X11/GLX, Git, CMake 3.24+, GCC or Clang with C++17 support,
-and ROOT 6 with GUI, ASImage and OpenGL (RGL) support. Verified with ROOT
-6.40.04 and GCC 13.3 on Linux with an Ubuntu 24.04 base. If you need ROOT,
-follow its [installation instructions](https://root.cern/install/) and choose
-a build matching your Linux distribution and compiler.
+Requires Git, CMake 3.24+, GCC or Clang with C++17 support, and ROOT 6 with
+GUI, ASImage and OpenGL (RGL) support, on either:
+
+- **Linux** with X11/GLX. Verified with ROOT 6.40.04 and GCC 13.3 on an
+  Ubuntu 24.04 base.
+- **macOS** with a ROOT built for the native Cocoa backend, ROOT's macOS
+  default (`root-config --has-cocoa` prints `yes`). No X11/XQuartz is needed. Verified with
+  Homebrew ROOT 6.40.04 and Apple Clang 21 on macOS 27 (Apple silicon).
+
+If you need ROOT, follow its [installation instructions](https://root.cern/install/)
+and choose a build matching your platform and compiler. On macOS,
+`brew install root cmake` provides both; Xcode's Command Line Tools
+(`xcode-select --install`) provide Git and the compiler.
 
 ### 1. Get the source
 
-Run these commands in a desktop terminal with access to your X11 display:
+Run these commands in a desktop terminal: on Linux, one with access to your
+X11 display; on macOS, any Terminal window in your logged-in session.
 
 ```sh
 git clone https://github.com/MohamedElashri/ROOTDoom.git
@@ -38,7 +47,9 @@ root-config --version
 ```
 
 If ROOT is supplied by an activated package environment, use that environment's
-setup instead. `root` and `root-config` should both be available on your PATH.
+setup instead. Homebrew's ROOT is already on your PATH and needs no setup.
+`root` and `root-config` should both be available on your PATH. To check ROOT
+and the native display before building, run `./scripts/check-environment.sh`.
 
 ### 3. Prepare the game data
 
@@ -58,7 +69,8 @@ cmake --build build --parallel
 ```
 
 The first configure downloads the pinned doomgeneric sources and requires
-internet access. The build produces `build/rootdoom` and `build/librootdoom.so`.
+internet access. The build produces `build/rootdoom` and the shared library
+`build/librootdoom.so` (`build/librootdoom.dylib` on macOS).
 
 ### 5. Launch and play
 
@@ -69,6 +81,7 @@ internet access. The build produces `build/rootdoom` and `build/librootdoom.so`.
 Click the canvas to focus it, then use **Enter** to select **New Game** and
 continue through the game setup. **Arrows** move/turn, **Ctrl** fires, **Space**
 opens doors, **Shift** runs, **Enter** selects and **Escape** opens the menu.
+On macOS, fire with **Control**, not Command.
 Close the window or quit through Doom's menu to stop.
 
 Configuration and saves go in `rootdoom-data/` under the current directory;
@@ -99,8 +112,9 @@ The default geometry renderer runs in the same ROOT process and leaves the
 prompt usable: enter `1+1` to try it. Close the game window, then enter `.q`
 at the ROOT prompt to exit ROOT. Restart ROOT before another game.
 To select the classic backend, pass `"classic"` as the third argument;
-the optional second argument is the data directory. For a custom build,
-set `ROOTDOOM_LIBRARY` to the absolute path of `librootdoom.so`.
+the optional second argument is the data directory. The macro finds the
+library in `build/`; for a custom build, set `ROOTDOOM_LIBRARY` to the absolute
+path of `librootdoom.so` (`librootdoom.dylib` on macOS).
 
 ## How it works
 
@@ -128,9 +142,10 @@ screen space so it stays in front of the player as the camera turns.
 That scene enters ROOT through
 [RootGeometryPresenter.cpp](src/RootGeometryPresenter.cpp). A custom
 `TGLSceneBase` calls [GeometryGL.cpp](src/GeometryGL.cpp) inside an embedded
-`TGLViewer`. ROOT owns the window, OpenGL context and event loop; the project's
-drawing code supplies the projection, texture handling, depth testing and
-compositing. The level is represented by triangle batches, rather than `TGeo`
+`TGLViewer`. ROOT owns the window, OpenGL context and event loop: on Linux the
+viewer renders through ROOT's GLX read-back device, and on macOS into Cocoa's
+on-screen OpenGL view at Retina resolution. The project's drawing code
+supplies the projection, texture handling, depth testing and compositing. The level is represented by triangle batches, rather than `TGeo`
 volumes. Try `--wireframe` to see the surfaces behind the textured corridors.
 
 During normal play, a host hook skips Doom's software world renderer just
