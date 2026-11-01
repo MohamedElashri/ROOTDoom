@@ -12,9 +12,13 @@ void doom(const char* iwad, const char* data_directory = "rootdoom-data", const 
     if (const char* configured = gSystem->Getenv("ROOTDOOM_LIBRARY")) library = configured;
     else {
         const TString base = here + "/../";
+        // CMake names the shared library .dylib on macOS, where ROOT reports "so".
         for (const char* build : {"build-local", "build"}) {
-            TString candidate = base + build + "/librootdoom." + gSystem->GetSoExt();
-            if (!gSystem->AccessPathName(candidate)) { library = candidate; break; }
+            for (const TString extension : {TString(gSystem->GetSoExt()), TString("dylib")}) {
+                TString candidate = base + build + "/librootdoom." + extension;
+                if (!gSystem->AccessPathName(candidate)) { library = candidate; break; }
+            }
+            if (!library.IsNull()) break;
         }
     }
     if (library.IsNull() || gSystem->Load(library) < 0) {

@@ -18,6 +18,8 @@ public:
     explicit RootDoomWindow(InputQueue* input = nullptr, std::function<void()> close = {}, bool geometry = false);
     ~RootDoomWindow() override;
     void CloseWindow() override;
+    // Same client-message route as a window-manager close button.
+    void RequestClose();
     TCanvas& Canvas();
     Bool_t HandleKey(Event_t* event) override;
     Bool_t HandleFocusChange(Event_t* event) override;

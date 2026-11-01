@@ -361,8 +361,7 @@ public:
         }
         if (finished) {
             TurnOff();
-            // Exercise the same ROOT client-message route as a WM close button.
-            window_.SendCloseMessage();
+            window_.RequestClose();
         } else {
             Reset();
         }
@@ -418,10 +417,10 @@ public:
         if (closing_) { Finish(); return false; }
         try {
             window_->FlushInput();
-            if (session_->Step()) window_->SendCloseMessage();
+            if (session_->Step()) window_->RequestClose();
         } catch (const std::exception& error) {
             session_->Fail(error.what());
-            window_->SendCloseMessage();
+            window_->RequestClose();
         }
         return true;
     }
@@ -505,7 +504,7 @@ int LaunchInteractive(const char* iwad, const char* data_directory, Renderer ren
     if (DoomHasRun() || InteractiveOwner()) throw std::logic_error("Doom can run only once per ROOT process; restart ROOT for a new session");
     TApplication::NeedGraphicsLibs();
     gApplication->InitializeGraphics();
-    if (!gClient || gROOT->IsBatch()) throw std::runtime_error("ROOT native GUI initialization failed; check DISPLAY");
+    if (!gClient || gROOT->IsBatch()) throw std::runtime_error("ROOT native GUI initialization failed; on Linux, check DISPLAY");
     InteractiveOwner() = std::make_unique<InteractiveSession>(std::move(options));
     std::cout << "ROOTDoom is running in this ROOT process. The prompt remains usable; close the game to stop it.\n";
     return 0;
@@ -541,7 +540,7 @@ int RunApplication(const RunOptions& options, char* executable)
         return 0;
     }
     if (gROOT->IsBatch()) {
-        std::cerr << "ROOT could not initialize its native GUI. Check DISPLAY and X11 permissions.\n";
+        std::cerr << "ROOT could not initialize its native GUI. On Linux, check DISPLAY and X11 permissions.\n";
         return 1;
     }
     RootDoomWindow window(runtime ? &runtime->input : nullptr, {}, options.renderer == Renderer::RootGL);

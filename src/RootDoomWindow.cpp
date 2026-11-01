@@ -84,6 +84,16 @@ void RootDoomWindow::CloseWindow()
     }
 }
 
+void RootDoomWindow::RequestClose()
+{
+    SendCloseMessage();
+#ifdef __APPLE__
+    // TGCocoa queues client messages but only drains that queue after a native
+    // Cocoa event, so without input the close would wait indefinitely.
+    if (gClient) gClient->HandleInput();
+#endif
+}
+
 TCanvas& RootDoomWindow::Canvas() { return *embedded_->GetCanvas(); }
 
 Bool_t RootDoomWindow::HandleKey(Event_t* event)
