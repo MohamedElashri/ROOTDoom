@@ -1,4 +1,4 @@
-name: Linux ROOT build
+name: ROOT build
 
 on:
   push:
@@ -56,3 +56,27 @@ jobs:
         run: |
           cat build/Testing/Temporary/LastTest.log || true
           cat build-debug/Testing/Temporary/LastTest.log || true
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - uses: actions/checkout@v5.1.0
+      - name: Install ROOT from Homebrew
+        run: |
+          brew install root
+          root-config --version
+          ./scripts/check-environment.sh
+      - name: Configure and build
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release -DROOTDOOM_BUILD_TESTS=ON \
+            -DROOTDOOM_ENABLE_GUI_TESTS=ON
+          cmake --build build --parallel 3
+      - name: Unit, batch graphics, lifecycle and native Cocoa GUI smoke
+        run: ctest --test-dir build --output-on-failure
+      - name: Test logs on failure
+        if: failure()
+        run: cat build/Testing/Temporary/LastTest.log || true
